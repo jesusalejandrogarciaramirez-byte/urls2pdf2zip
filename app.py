@@ -1,3 +1,4 @@
+import base64
 import io
 import re
 import time
@@ -168,7 +169,13 @@ def generate_pdf(images_data: List[Dict[str, object]]) -> bytes:
         width, height = img.size
 
         pdf.setPageSize((width, height))
-        pdf.drawImage(ImageReader(io.BytesIO(image_bytes)), 0, 0, width=width, height=height)
+        pdf.drawImage(
+            ImageReader(io.BytesIO(image_bytes)),
+            0,
+            0,
+            width=width,
+            height=height,
+        )
         pdf.showPage()
 
     pdf.save()
@@ -179,12 +186,80 @@ def generate_pdf(images_data: List[Dict[str, object]]) -> bytes:
 def generate_zip(images_data: List[Dict[str, object]]) -> bytes:
     buffer = io.BytesIO()
 
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+    with zipfile.ZipFile(
+        buffer,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+    ) as zf:
         for item in images_data:
             zf.writestr(item["filename"], item["bytes"])
 
     buffer.seek(0)
     return buffer.read()
+
+
+def render_thumbnail_gallery(
+    images_data: List[Dict[str, object]],
+    max_items: int = 24,
+    columns_count: int = 4,
+    title: str = "Miniaturas",
+) -> None:
+    st.subheader(title)
+
+    if not images_data:
+        st.info("Aún no hay imágenes para mostrar.")
+        return
+
+    total = len(images_data)
+    visible_items = images_data[:max_items]
+
+    st.caption(f"Mostrando {len(visible_items)} de {total} páginas descargadas.")
+
+    for row_start in range(0, len(visible_items), columns_count):
+        row_items = visible_items[row_start : row_start + columns_count]
+        cols = st.columns(columns_count)
+
+        for idx, item in enumerate(row_items):
+            with cols[idx]:
+                st.image(
+                    item["bytes"],
+                    caption=f"Página {item['page_number']}",
+                    use_container_width=True,
+                )
+
+
+def auto_download_file(file_bytes: bytes, filename: str, mime_type: str, key: str) -> None:
+    b64 = base64.b64encode(file_bytes).decode()
+    href = f"data:{mime_type};base64,{b64}"
+
+    st.components.v1.html(
+        f"""
+        <html>
+          <body>
+            <script>
+              (function() {{
+                const already = window.sessionStorage.getItem("auto_download_{key}");
+                if (!already) {{
+                  const a = document.createElement("a");
+                  a.href = "{href}";
+                  a.download = "{filename}";
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  window.sessionStorage.setItem("auto_download_{key}", "1");
+                }}
+              }})();
+            </script>
+            <div style="font-family: Arial, sans-serif; font-size: 14px;">
+              Intentando descarga automática de <strong>{filename}</strong>.
+              Si el navegador la bloquea, usa el botón manual de abajo.
+            </div>
+          </body>
+        </html>
+        """,
+        height=45,
+    )
 
 
 def main() -> None:
@@ -195,7 +270,7 @@ def main() -> None:
         "y opcionalmente también un ZIP."
     )
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         edition_name = st.selectbox("Periódico / edición", list(EDITIONS.keys()))
@@ -219,7 +294,24 @@ def main() -> None:
             step=1,
         )
 
+    with col3:
+        preview_limit = st.number_input(
+            "Miniaturas a mostrar",
+            min_value=4,
+            max_value=120,
+            value=24,
+            step=4,
+        )
+        preview_columns = st.number_input(
+            "Columnas de miniaturas",
+            min_value=2,
+            max_value=8,
+            value=4,
+            step=1,
+        )
+
     download_zip = st.checkbox("Descargar también imágenes en ZIP", value=True)
+    auto_download = st.checkbox("Descarga automática al terminar", value=True)
     delay_seconds = st.number_input(
         "Pausa entre intentos (segundos)",
         min_value=0.0,
@@ -238,7 +330,7 @@ def main() -> None:
 
         progress_bar = st.progress(0)
         log_box = st.empty()
-        preview_box = st.container()
+        live_preview_box = st.empty()
 
         base_name = f"{sanitize_name(edition_name)}_{selected_date.isoformat()}"
 
@@ -264,6 +356,14 @@ def main() -> None:
                 logs.append(f"✓ Página {page} descargada correctamente.")
                 consecutive_failures = 0
 
+                with live_preview_box.container():
+                    render_thumbnail_gallery(
+                        images_data=images_data,
+                        max_items=int(preview_limit),
+                        columns_count=int(preview_columns),
+                        title="Miniaturas en tiempo real",
+                    )
+
             except Exception as exc:
                 consecutive_failures += 1
                 logs.append(f"✗ Página {page} falló. Motivo: {exc}")
@@ -288,8 +388,8 @@ def main() -> None:
         if not images_data:
             st.error("No se encontró ninguna imagen válida.")
             st.info(
-                "Si El Universal falla, normalmente ya no es CORS porque aquí corre en Python. "
-                "Suele ser bloqueo remoto, fecha inexistente o respuesta distinta a imagen."
+                "Si El Universal falla aquí, normalmente ya no es CORS. "
+                "Suele ser bloqueo remoto, fecha inexistente o cambio en la estructura del sitio."
             )
             return
 
@@ -301,17 +401,25 @@ def main() -> None:
 
         st.success(f"Se encontraron {len(images_data)} páginas.")
 
-        st.subheader("Vista previa")
-        preview_cols = st.columns(4)
-
-        for idx, item in enumerate(images_data[:20]):
-            with preview_cols[idx % 4]:
-                st.image(item["bytes"], caption=f"Página {item['page_number']}", use_container_width=True)
+        render_thumbnail_gallery(
+            images_data=images_data,
+            max_items=int(preview_limit),
+            columns_count=int(preview_columns),
+            title="Vista previa final",
+        )
 
         st.subheader("Descargas")
 
         with st.spinner("Generando PDF..."):
             pdf_bytes = generate_pdf(images_data)
+
+        if auto_download:
+            auto_download_file(
+                file_bytes=pdf_bytes,
+                filename=f"{base_name}.pdf",
+                mime_type="application/pdf",
+                key=f"{base_name}_pdf",
+            )
 
         st.download_button(
             label="Descargar PDF",
@@ -323,6 +431,14 @@ def main() -> None:
         if download_zip:
             with st.spinner("Generando ZIP..."):
                 zip_bytes = generate_zip(images_data)
+
+            if auto_download:
+                auto_download_file(
+                    file_bytes=zip_bytes,
+                    filename=f"{base_name}.zip",
+                    mime_type="application/zip",
+                    key=f"{base_name}_zip",
+                )
 
             st.download_button(
                 label="Descargar ZIP",

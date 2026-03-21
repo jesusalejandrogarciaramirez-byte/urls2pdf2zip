@@ -1,6 +1,6 @@
 📰 Descargador de Ediciones (Milenio / El Universal)
 
-Aplicación en Python + Streamlit que permite descargar automáticamente las páginas de ediciones impresas de periódicos, generar un PDF respetando el tamaño original de cada imagen y opcionalmente un ZIP con todas las imágenes.
+Aplicación en Python + Streamlit que permite convertir urls de imagenes a pdf y comprimirlas en un zip
 
 ✨ Características
 📅 Selector de fecha

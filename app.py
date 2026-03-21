@@ -13,7 +13,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 
-st.set_page_config(page_title="Descargador de periódicos", layout="wide")
+st.set_page_config(page_title="Descargador de periódicos", layout="centered")
 
 
 EDITIONS: Dict[str, Dict[str, object]] = {
@@ -199,93 +199,51 @@ def generate_zip(images_data: List[Dict[str, object]]) -> bytes:
     return buffer.read()
 
 
-def render_thumbnail_gallery(
-    images_data: List[Dict[str, object]],
-    max_items: int = 24,
-    columns_count: int = 4,
-    title: str = "Miniaturas",
-) -> None:
-    st.subheader(title)
-
-    if not images_data:
-        st.info("Aún no hay imágenes para mostrar.")
-        return
-
-    total = len(images_data)
-    visible_items = images_data[:max_items]
-
-    st.caption(f"Mostrando {len(visible_items)} de {total} páginas descargadas.")
-
-    for row_start in range(0, len(visible_items), columns_count):
-        row_items = visible_items[row_start : row_start + columns_count]
-        cols = st.columns(columns_count)
-
-        for idx, item in enumerate(row_items):
-            with cols[idx]:
-                st.image(
-                    item["bytes"],
-                    caption=f"Página {item['page_number']}",
-                    use_container_width=True,
-                )
-
-
 def auto_download_file(file_bytes: bytes, filename: str, mime_type: str, key: str) -> None:
     b64 = base64.b64encode(file_bytes).decode()
     href = f"data:{mime_type};base64,{b64}"
 
     st.components.v1.html(
         f"""
-        <html>
-          <body>
-            <script>
-              (function() {{
-                const already = window.sessionStorage.getItem("auto_download_{key}");
-                if (!already) {{
-                  const a = document.createElement("a");
-                  a.href = "{href}";
-                  a.download = "{filename}";
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  window.sessionStorage.setItem("auto_download_{key}", "1");
-                }}
-              }})();
-            </script>
-            <div style="font-family: Arial, sans-serif; font-size: 14px;">
-              Intentando descarga automática de <strong>{filename}</strong>.
-              Si el navegador la bloquea, usa el botón manual de abajo.
-            </div>
-          </body>
-        </html>
+        <script>
+          (function() {{
+            const already = sessionStorage.getItem("auto_download_{key}");
+            if (!already) {{
+              const a = document.createElement("a");
+              a.href = "{href}";
+              a.download = "{filename}";
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              sessionStorage.setItem("auto_download_{key}", "1");
+            }}
+          }})();
+        </script>
         """,
-        height=45,
+        height=0,
     )
 
 
 def main() -> None:
     st.title("Descargador de ediciones")
-    st.write(
-        "Genera URLs por fecha y periódico, intenta descargar páginas en secuencia, "
-        "tolera fallos consecutivos, crea PDF respetando el tamaño original de cada imagen "
-        "y opcionalmente también un ZIP."
-    )
+
+    edition_name = st.selectbox("Periódico / edición", list(EDITIONS.keys()))
+    selected_date = st.date_input("Fecha", value=date.today())
+
+    edition = EDITIONS[edition_name]
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        edition_name = st.selectbox("Periódico / edición", list(EDITIONS.keys()))
-        selected_date = st.date_input("Fecha", value=date.today())
-
-    edition = EDITIONS[edition_name]
-
-    with col2:
         max_attempts = st.number_input(
-            "Intentos máximos de páginas",
+            "Intentos máximos",
             min_value=10,
             max_value=300,
             value=int(edition["default_attempts"]),
             step=1,
         )
+
+    with col2:
         max_consecutive_failures = st.number_input(
             "Fallos consecutivos para detenerse",
             min_value=1,
@@ -295,32 +253,17 @@ def main() -> None:
         )
 
     with col3:
-        preview_limit = st.number_input(
-            "Miniaturas a mostrar",
-            min_value=4,
-            max_value=120,
-            value=24,
-            step=4,
-        )
-        preview_columns = st.number_input(
-            "Columnas de miniaturas",
-            min_value=2,
-            max_value=8,
-            value=4,
-            step=1,
+        delay_seconds = st.number_input(
+            "Pausa entre intentos",
+            min_value=0.0,
+            max_value=5.0,
+            value=0.0,
+            step=0.1,
         )
 
-    download_zip = st.checkbox("Descargar también imágenes en ZIP", value=True)
-    auto_download = st.checkbox("Descarga automática al terminar", value=True)
-    delay_seconds = st.number_input(
-        "Pausa entre intentos (segundos)",
-        min_value=0.0,
-        max_value=5.0,
-        value=0.0,
-        step=0.1,
-    )
+    download_zip = st.checkbox("Generar también ZIP", value=True)
 
-    if st.button("Buscar y generar archivos", type="primary"):
+    if st.button("Buscar y generar", type="primary"):
         start_page = int(edition["start_page"])
         images_data: List[Dict[str, object]] = []
         logs: List[str] = []
@@ -329,15 +272,14 @@ def main() -> None:
         page = start_page
 
         progress_bar = st.progress(0)
-        log_box = st.empty()
-        live_preview_box = st.empty()
+        status_box = st.empty()
+        info_box = st.empty()
 
         base_name = f"{sanitize_name(edition_name)}_{selected_date.isoformat()}"
 
         while attempts < int(max_attempts):
             url = build_url(edition_name, selected_date, page)
             attempts += 1
-            logs.append(f"Intentando página {page}: {url}")
 
             try:
                 image_bytes, content_type = fetch_image(url)
@@ -353,32 +295,29 @@ def main() -> None:
                     }
                 )
 
-                logs.append(f"✓ Página {page} descargada correctamente.")
                 consecutive_failures = 0
-
-                with live_preview_box.container():
-                    render_thumbnail_gallery(
-                        images_data=images_data,
-                        max_items=int(preview_limit),
-                        columns_count=int(preview_columns),
-                        title="Miniaturas en tiempo real",
-                    )
+                logs.append(f"✓ Página {page} descargada")
+                status_box.text("\n".join(logs[-12:]))
 
             except Exception as exc:
                 consecutive_failures += 1
-                logs.append(f"✗ Página {page} falló. Motivo: {exc}")
                 logs.append(
-                    f"Fallos consecutivos: {consecutive_failures}/{int(max_consecutive_failures)}"
+                    f"✗ Página {page} falló ({consecutive_failures}/{int(max_consecutive_failures)}): {exc}"
                 )
+                status_box.text("\n".join(logs[-12:]))
 
                 if consecutive_failures >= int(max_consecutive_failures):
-                    logs.append("Se alcanzó el límite de fallos consecutivos. Se detiene la búsqueda.")
+                    logs.append("Se alcanzó el límite de fallos consecutivos. Fin del proceso.")
+                    status_box.text("\n".join(logs[-12:]))
                     progress_bar.progress(min(attempts / int(max_attempts), 1.0))
-                    log_box.text("\n".join(logs))
                     break
 
             progress_bar.progress(min(attempts / int(max_attempts), 1.0))
-            log_box.text("\n".join(logs))
+            info_box.info(
+                f"Páginas válidas: {len(images_data)} | "
+                f"Intento actual: {attempts}/{int(max_attempts)} | "
+                f"Página actual: {page}"
+            )
 
             page += 1
 
@@ -387,42 +326,22 @@ def main() -> None:
 
         if not images_data:
             st.error("No se encontró ninguna imagen válida.")
-            st.info(
-                "Si El Universal falla aquí, normalmente ya no es CORS. "
-                "Suele ser bloqueo remoto, fecha inexistente o cambio en la estructura del sitio."
-            )
             return
 
-        logs.append("")
-        logs.append(f"Total de páginas encontradas: {len(images_data)}")
-        logs.append(f"Primera página detectada: {images_data[0]['page_number']}")
-        logs.append(f"Última página detectada: {images_data[-1]['page_number']}")
-        log_box.text("\n".join(logs))
-
-        st.success(f"Se encontraron {len(images_data)} páginas.")
-
-        render_thumbnail_gallery(
-            images_data=images_data,
-            max_items=int(preview_limit),
-            columns_count=int(preview_columns),
-            title="Vista previa final",
-        )
-
-        st.subheader("Descargas")
+        st.success(f"Proceso terminado. Páginas descargadas: {len(images_data)}")
 
         with st.spinner("Generando PDF..."):
             pdf_bytes = generate_pdf(images_data)
 
-        if auto_download:
-            auto_download_file(
-                file_bytes=pdf_bytes,
-                filename=f"{base_name}.pdf",
-                mime_type="application/pdf",
-                key=f"{base_name}_pdf",
-            )
+        auto_download_file(
+            file_bytes=pdf_bytes,
+            filename=f"{base_name}.pdf",
+            mime_type="application/pdf",
+            key=f"{base_name}_pdf",
+        )
 
         st.download_button(
-            label="Descargar PDF",
+            label="Descargar PDF manualmente",
             data=pdf_bytes,
             file_name=f"{base_name}.pdf",
             mime="application/pdf",
@@ -432,24 +351,19 @@ def main() -> None:
             with st.spinner("Generando ZIP..."):
                 zip_bytes = generate_zip(images_data)
 
-            if auto_download:
-                auto_download_file(
-                    file_bytes=zip_bytes,
-                    filename=f"{base_name}.zip",
-                    mime_type="application/zip",
-                    key=f"{base_name}_zip",
-                )
+            auto_download_file(
+                file_bytes=zip_bytes,
+                filename=f"{base_name}.zip",
+                mime_type="application/zip",
+                key=f"{base_name}_zip",
+            )
 
             st.download_button(
-                label="Descargar ZIP",
+                label="Descargar ZIP manualmente",
                 data=zip_bytes,
                 file_name=f"{base_name}.zip",
                 mime="application/zip",
             )
-
-        st.subheader("URLs encontradas")
-        for item in images_data:
-            st.code(item["url"], language=None)
 
 
 if __name__ == "__main__":

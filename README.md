@@ -102,10 +102,3 @@ Respeta los términos de uso de cada medio.
 👨‍💻 Autor
 
 ChatGPT 🚀
-
-Si quieres, puedo hacerte:
-
-versión que guarde automáticamente en disco
-versión con multithreading (más rápida)
-versión ejecutable .exe
-versión con interfaz más pro (tipo app desktop)

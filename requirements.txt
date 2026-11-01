@@ -1,5 +1,7 @@
+# Versiones observadas en el log y comprobadas en la revisión.
 streamlit==1.59.2
 starlette==0.50.0
-requests>=2.32.0,<3
-Pillow>=10.4.0,<13
-reportlab>=4.2.0,<5
+requests==2.34.2
+Pillow==12.3.0
+reportlab==4.5.1
+pyarrow==24.0.0
